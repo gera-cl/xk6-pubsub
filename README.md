@@ -23,7 +23,7 @@ go install github.com/k6io/xk6/cmd/xk6@latest
 export CGO_ENABLED=1
 ```
 ```shell
-xk6 build --with github.com/olvod/xk6-pubsub@latest
+xk6 build --with github.com/gera-cl/xk6-pubsub@latest
 ```
 
 xk6 build --with github.com/k6io/xk6-redis="/Users/avpretty/pr/xk6-pubsub"
