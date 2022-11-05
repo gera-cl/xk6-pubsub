@@ -73,10 +73,26 @@ func (ps *PubSub) Publisher(config map[string]interface{}) *googlecloud.Publishe
 	return client
 }
 
-// Publish publishes a message to the provided topic using provided
-// googlecloud.Publisher. The msg value must be passed as string
-// and will be converted to bytes sequence before publishing.
-func (ps *PubSub) Publish(ctx context.Context, p *googlecloud.Publisher, topic, msg string, metadata map[string]string) error {
+// Publish publishes a message using the function publishMessage.
+// The msg value must be passed as string and will be converted to bytes
+// sequence before publishing.
+func (ps *PubSub) Publish(ctx context.Context, p *googlecloud.Publisher, topic, msg string) error {
+	newMessage := message.NewMessage(watermill.NewShortUUID(), []byte(msg))
+	return publishMessage(ctx, p, topic, newMessage)
+}
+
+// PublishWithAttributes publishes a message using the function publishMessage.
+// The msg value must be passed as string and will be converted to a bytes
+// sequence before publishing. The attributes value must be passed as map[string]string
+// and will be set as metadata.
+func (ps *PubSub) PublishWithAttributes(ctx context.Context, p *googlecloud.Publisher, topic, msg string, attributes map[string]string) error {
+	newMessage := createMessage(watermill.NewShortUUID(), []byte(msg), attributes)
+	return publishMessage(ctx, p, topic, newMessage)
+}
+
+// publishMessage publishes a message to the provided topic using provided
+// googlecloud.Publisher. The message value must be passed as Message, a watermill struct.
+func publishMessage(ctx context.Context, p *googlecloud.Publisher, topic string, message *message.Message) error {
 	state := lib.GetState(ctx)
 
 	if state == nil {
@@ -87,7 +103,7 @@ func (ps *PubSub) Publish(ctx context.Context, p *googlecloud.Publisher, topic, 
 
 	err := p.Publish(
 		topic,
-		NewMessage(watermill.NewShortUUID(), []byte(msg), metadata),
+		message,
 	)
 
 	if err != nil {
@@ -109,7 +125,8 @@ func withCredentials(credentials string) []option.ClientOption {
 	return opt
 }
 
-func NewMessage(uuid string, payload message.Payload, metadata message.Metadata) *message.Message {
+// createMessage function creates a Message object including metadata.
+func createMessage(uuid string, payload message.Payload, metadata message.Metadata) *message.Message {
 	return &message.Message{
 		UUID:     uuid,
 		Metadata: metadata,
