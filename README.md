@@ -40,12 +40,69 @@ Or use [PubSub emulator](https://cloud.google.com/pubsub/docs/emulator#linux-mac
 export PUBSUB_EMULATOR_HOST=<emulator_host>
 ```
 
-## Example
+## k6 scripting
+
+**Required imports**
+```js
+import { check } from 'k6';
+import pubsub from 'k6/x/pubsub';
+```
+
+**Create a new publisher client**
+```js
+export default function () {
+     /**
+     * default values
+     * 
+     * publishTimeout: 5
+     * debug: false
+     * trace: false
+     * doNotCreateTopicIfMissing: false
+     */
+
+     const client = pubsub.publisher({
+          projectID: __ENV.PUBSUB_PROJECT_ID || "",
+          credentials: __ENV.PUBSUB_CREDENTIALS || "",
+          publishTimeout: 5,
+          debug: true,
+          trace: true,
+          doNotCreateTopicIfMissing: false
+     });
+
+     ...
+}
+```
+
+**Publish a simple message (only data) and check**
+```js
+let error = pubsub.publish(client, 'topic_name', 'message_data');
+
+check(error, {
+     "is sent": err => err === null
+});
+```
+
+**Alternatively, you can also publish a message including data and attributes using the method publishWithAttributes**
+```js
+let myAttributes = {
+     foo: 'bar'
+}
+
+let error = pubsub.publishWithAttributes(client, 'topic_name', 'message_data', myAttributes);
+```
+
+**Close the client**
+```js
+client.close()
+```
+
+## Execution
+
 ```shell
 ./k6 run example.js
 ```
 
-Result output:
+**Result output**
 ```
           /\      |‾‾| /‾‾/   /‾‾/   
      /\  /  \     |  |/  /   /  /    
