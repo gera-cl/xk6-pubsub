@@ -1,7 +1,6 @@
 package pubsub
 
 import (
-	"context"
 	"errors"
 	"log"
 	"time"
@@ -20,12 +19,29 @@ import (
 // Register the extension on module initialization, available to
 // import from JS as "k6/x/pubsub".
 func init() {
-	modules.Register("k6/x/pubsub", new(PubSub))
+	modules.Register("k6/x/pubsub", new(RootModule))
 }
+
+type RootModule struct{}
 
 // PubSub is the k6 extension for a Google Pub/Sub client.
 // See https://cloud.google.com/pubsub/docs/overview
-type PubSub struct{}
+type PubSub struct {
+	vu modules.VU
+}
+
+var (
+	_ modules.Module   = &RootModule{}
+	_ modules.Instance = &PubSub{}
+)
+
+func (*RootModule) NewModuleInstance(vu modules.VU) modules.Instance {
+	return &PubSub{vu: vu}
+}
+
+func (ps *PubSub) Exports() modules.Exports {
+	return modules.Exports{Default: ps}
+}
 
 // publisherConf provides a Pub/Sub publisher client configuration. This configuration
 // structure can be used on a client side. All parameters are optional.
@@ -76,25 +92,23 @@ func (ps *PubSub) Publisher(config map[string]interface{}) *googlecloud.Publishe
 // Publish publishes a message using the function publishMessage.
 // The msg value must be passed as string and will be converted to bytes
 // sequence before publishing.
-func (ps *PubSub) Publish(ctx context.Context, p *googlecloud.Publisher, topic, msg string) error {
+func (ps *PubSub) Publish(p *googlecloud.Publisher, topic, msg string) error {
 	newMessage := message.NewMessage(watermill.NewShortUUID(), []byte(msg))
-	return publishMessage(ctx, p, topic, newMessage)
+	return publishMessage(p, topic, newMessage, ps.vu.State())
 }
 
 // PublishWithAttributes publishes a message using the function publishMessage.
 // The msg value must be passed as string and will be converted to a bytes
 // sequence before publishing. The attributes value must be passed as map[string]string
 // and will be set as metadata.
-func (ps *PubSub) PublishWithAttributes(ctx context.Context, p *googlecloud.Publisher, topic, msg string, attributes map[string]string) error {
+func (ps *PubSub) PublishWithAttributes(p *googlecloud.Publisher, topic, msg string, attributes map[string]string) error {
 	newMessage := createMessage(watermill.NewShortUUID(), []byte(msg), attributes)
-	return publishMessage(ctx, p, topic, newMessage)
+	return publishMessage(p, topic, newMessage, ps.vu.State())
 }
 
 // publishMessage publishes a message to the provided topic using provided
 // googlecloud.Publisher. The message value must be passed as Message, a watermill struct.
-func publishMessage(ctx context.Context, p *googlecloud.Publisher, topic string, message *message.Message) error {
-	state := lib.GetState(ctx)
-
+func publishMessage(p *googlecloud.Publisher, topic string, message *message.Message, state *lib.State) error {
 	if state == nil {
 		err := errors.New("xk6-pubsub: state is nil")
 		ReportError(err, "cannot determine state")
