@@ -1,18 +1,17 @@
-package pubsub
+package xk6pubsub
 
 import (
+	"context"
 	"errors"
 	"log"
 	"time"
 
-	"github.com/ThreeDotsLabs/watermill"
-	"github.com/ThreeDotsLabs/watermill-googlecloud/pkg/googlecloud"
-	"github.com/ThreeDotsLabs/watermill/message"
-
+	"cloud.google.com/go/pubsub"
+	vkit "cloud.google.com/go/pubsub/apiv1"
+	gax "github.com/googleapis/gax-go/v2"
+	"github.com/mitchellh/mapstructure"
 	"go.k6.io/k6/js/modules"
 	"go.k6.io/k6/lib"
-
-	"github.com/mitchellh/mapstructure"
 	"google.golang.org/api/option"
 )
 
@@ -54,13 +53,10 @@ type publisherConf struct {
 	DoNotCreateTopicIfMissing bool
 }
 
-// Publisher is the basic wrapper for Google Pub/Sub publisher and uses
-// watermill as a client. See https://github.com/ThreeDotsLabs/watermill/
-//
+// Publisher is the basic wrapper for Google Pub/Sub publisher.
 // Publisher represents the constructor and creates an instance of
-// googlecloud.Publisher with provided projectID and publishTimeout.
-// Publisher uses watermill StdLoggerAdapter logger.
-func (ps *PubSub) Publisher(config map[string]interface{}) *googlecloud.Publisher {
+// pubsub.PublisherClient with provided projectID.
+func (ps *PubSub) Publisher(config map[string]interface{}) *pubsub.Client {
 	cnf := &publisherConf{}
 	err := mapstructure.Decode(config, cnf)
 	if err != nil {
@@ -71,17 +67,26 @@ func (ps *PubSub) Publisher(config map[string]interface{}) *googlecloud.Publishe
 		cnf.PublishTimeout = 5
 	}
 
-	client, err := googlecloud.NewPublisher(
-		googlecloud.PublisherConfig{
-			ProjectID:                 cnf.ProjectID,
-			Marshaler:                 googlecloud.DefaultMarshalerUnmarshaler{},
-			PublishTimeout:            time.Second * time.Duration(cnf.PublishTimeout),
-			DoNotCreateTopicIfMissing: cnf.DoNotCreateTopicIfMissing,
-			ClientOptions:             withCredentials(cnf.Credentials),
-		},
-		watermill.NewStdLogger(cnf.Debug, cnf.Trace),
-	)
+	ctx := context.Background()
 
+	// Init Client Config
+	clientConfig := &pubsub.ClientConfig{
+		PublisherCallOptions: &vkit.PublisherCallOptions{
+			Publish: []gax.CallOption{
+				gax.WithTimeout(time.Duration(cnf.PublishTimeout) * time.Second),
+			},
+		},
+	}
+
+	// Init Client Options
+	var opt []option.ClientOption
+
+	// Add WithCredentialsJSON
+	if len(cnf.Credentials) > 0 {
+		opt = append(opt, option.WithCredentialsJSON([]byte(cnf.Credentials)))
+	}
+
+	client, err := pubsub.NewClientWithConfig(ctx, cnf.ProjectID, clientConfig, opt...)
 	if err != nil {
 		log.Fatalf("xk6-pubsub: unable to init publisher: %v", err)
 	}
@@ -92,58 +97,41 @@ func (ps *PubSub) Publisher(config map[string]interface{}) *googlecloud.Publishe
 // Publish publishes a message using the function publishMessage.
 // The msg value must be passed as string and will be converted to bytes
 // sequence before publishing.
-func (ps *PubSub) Publish(p *googlecloud.Publisher, topic, msg string) error {
-	newMessage := message.NewMessage(watermill.NewShortUUID(), []byte(msg))
-	return publishMessage(p, topic, newMessage, ps.vu.State())
+func (ps *PubSub) Publish(p *pubsub.Client, topic, msg string) error {
+	return publishMessage(p, topic, []byte(msg), ps.vu.State())
 }
 
 // PublishWithAttributes publishes a message using the function publishMessage.
 // The msg value must be passed as string and will be converted to a bytes
 // sequence before publishing. The attributes value must be passed as map[string]string
 // and will be set as metadata.
-func (ps *PubSub) PublishWithAttributes(p *googlecloud.Publisher, topic, msg string, attributes map[string]string) error {
-	newMessage := createMessage(watermill.NewShortUUID(), []byte(msg), attributes)
-	return publishMessage(p, topic, newMessage, ps.vu.State())
+func (ps *PubSub) PublishWithAttributes(p *pubsub.Client, topic, msg string, attributes map[string]string) error {
+	return publishMessage(p, topic, []byte(msg), ps.vu.State(), attributes)
 }
 
 // publishMessage publishes a message to the provided topic using provided
-// googlecloud.Publisher. The message value must be passed as Message, a watermill struct.
-func publishMessage(p *googlecloud.Publisher, topic string, message *message.Message, state *lib.State) error {
+// pubsub.PublisherClient.
+func publishMessage(p *pubsub.Client, topic string, data []byte, state *lib.State, attributes ...map[string]string) error {
 	if state == nil {
 		err := errors.New("xk6-pubsub: state is nil")
 		ReportError(err, "cannot determine state")
 		return err
 	}
 
-	err := p.Publish(
-		topic,
-		message,
-	)
+	msg := &pubsub.Message{
+		Data: data,
+	}
+	if len(attributes) > 0 {
+		msg.Attributes = attributes[0]
+	}
 
+	ctx := context.Background()
+	res := p.Topic(topic).Publish(ctx, msg)
+	_, err := res.Get(ctx)
 	if err != nil {
 		ReportError(err, "xk6-pubsub: unable to publish message")
 		return err
 	}
 
 	return nil
-}
-
-// withCredentials explicitly setup Pub/Sub credentials as option.ClientOption.
-func withCredentials(credentials string) []option.ClientOption {
-	var opt []option.ClientOption
-
-	if len(credentials) > 0 {
-		opt = append(opt, option.WithCredentialsJSON([]byte(credentials)))
-	}
-
-	return opt
-}
-
-// createMessage function creates a Message object including metadata.
-func createMessage(uuid string, payload message.Payload, metadata message.Metadata) *message.Message {
-	return &message.Message{
-		UUID:     uuid,
-		Metadata: metadata,
-		Payload:  payload,
-	}
 }

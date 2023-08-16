@@ -1,4 +1,4 @@
-package pubsub
+package xk6pubsub
 
 import "fmt"
 
